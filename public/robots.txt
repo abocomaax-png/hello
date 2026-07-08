@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+Disallow: /auth
+Disallow: /dashboard
+Disallow: /workbench
+Disallow: /incidents
+Disallow: /leaderboard
+Disallow: /settings

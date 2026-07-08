@@ -1,0 +1,72 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Only this exact account is ever treated as an admin.
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email == 'abocomaax@gmail.com';
+    }
+
+    match /profiles/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      // A trainee may edit their own handle/displayName, but never their own
+      // xp or casesClosed — those fields only ever change inside the
+      // submitScenarioAttempt Cloud Function, which uses the Admin SDK and
+      // bypasses these rules entirely.
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.xp == resource.data.xp
+        && request.resource.data.casesClosed == resource.data.casesClosed;
+      allow delete: if false;
+    }
+
+    match /scenarios/{scenarioId} {
+      allow read: if (resource.data.isPublished == true) || isAdmin();
+      allow write: if isAdmin();
+
+      // `isPublished` is denormalized onto each log doc at publish time.
+      // Checking resource.data directly (instead of get()-ing the parent
+      // scenario) avoids one extra document read PER log returned by a
+      // query — with a get()-based rule, a 200-line scenario query costs
+      // 200 extra reads and round trips just for the permission check.
+      match /logs/{logId} {
+        allow read: if isAdmin() || resource.data.isPublished == true;
+        allow write: if isAdmin();
+      }
+
+      // The answer key. No trainee — published scenario or not — can ever
+      // read this subcollection directly; only the admin author and the
+      // grading Cloud Function (Admin SDK) can.
+      match /answers/{logId} {
+        allow read: if isAdmin();
+        allow write: if isAdmin();
+      }
+
+      // Debrief questions shown to the trainee. Same denormalization as
+      // /logs above, for the same reason.
+      match /questions/{questionId} {
+        allow read: if isAdmin() || resource.data.isPublished == true;
+        allow write: if isAdmin();
+      }
+
+      // Correct answers to the debrief questions. Same protection as
+      // /answers above — only the admin author and the grading Cloud
+      // Function (Admin SDK) can ever read this.
+      match /questionAnswers/{questionId} {
+        allow read: if isAdmin();
+        allow write: if isAdmin();
+      }
+    }
+
+    match /attempts/{attemptId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      // Attempts (and therefore scores/XP) are only ever created by the
+      // submitScenarioAttempt Cloud Function — never directly by a client.
+      allow write: if false;
+    }
+  }
+}
